@@ -38,6 +38,8 @@ class ServerStockMarketBot:
         
         # News API key
         self.news_api_key = os.getenv('NEWS_API_KEY')
+        # Data freshness threshold in days
+        self.max_data_age_days = 3
         
         if not all([self.api_key, self.api_secret, self.access_token, self.access_token_secret]):
             raise ValueError("Missing X API credentials in environment variables")
@@ -59,6 +61,15 @@ class ServerStockMarketBot:
         
         logging.info("Server Stock Market Bot initialized successfully")
     
+    def is_data_recent(self, date_str):
+        """Check if the data date is within the freshness threshold"""
+        try:
+            data_date = datetime.strptime(date_str, "%Y-%m-%d").date()
+            return (datetime.utcnow().date() - data_date).days <= self.max_data_age_days
+        except Exception as e:
+            logging.error(f"Error parsing date {date_str}: {e}")
+            return False
+
     def get_stock_data_alpha_vantage(self, symbol):
         """Get real stock data from Alpha Vantage"""
         if not self.alpha_vantage_key:
@@ -80,12 +91,16 @@ class ServerStockMarketBot:
             if 'Time Series (Daily)' in data:
                 time_series = data['Time Series (Daily)']
                 dates = sorted(time_series.keys(), reverse=True)
-                
+
                 if len(dates) >= 2:
-                    today = dates[0]
+                    latest = dates[0]
+                    if not self.is_data_recent(latest):
+                        logging.warning(f"Stale data for {symbol}: {latest}")
+                        return None
+
                     yesterday = dates[1]
                     
-                    today_close = float(time_series[today]['4. close'])
+                    today_close = float(time_series[latest]['4. close'])
                     yesterday_close = float(time_series[yesterday]['4. close'])
                     
                     change = today_close - yesterday_close
@@ -95,7 +110,8 @@ class ServerStockMarketBot:
                         'price': today_close,
                         'change': change,
                         'change_pct': change_pct,
-                        'name': symbol
+                        'name': symbol,
+                        'date': latest
                     }
             
             logging.warning(f"No data available for {symbol}")
@@ -131,7 +147,7 @@ class ServerStockMarketBot:
                 'pageSize': 5,
                 'apiKey': self.news_api_key
             }
-            
+
             response = requests.get(url, params=params, timeout=10)
             data = response.json()
             
@@ -188,12 +204,13 @@ class ServerStockMarketBot:
                 logging.info(f"✅ {symbol}: ${stock_data['price']:.2f} ({stock_data['change_pct']:+.2f}%)")
             else:
                 # Use sample data if no real data available
+                today_str = datetime.now().strftime('%Y-%m-%d')
                 sample_data = {
-                    'AAPL': {'price': 150.25, 'change_pct': 2.5, 'name': 'Apple'},
-                    'MSFT': {'price': 300.50, 'change_pct': 1.8, 'name': 'Microsoft'},
-                    'GOOGL': {'price': 120.75, 'change_pct': -1.2, 'name': 'Google'},
-                    'TSLA': {'price': 250.00, 'change_pct': 3.5, 'name': 'Tesla'},
-                    'NVDA': {'price': 450.25, 'change_pct': 5.2, 'name': 'NVIDIA'}
+                    'AAPL': {'price': 150.25, 'change_pct': 2.5, 'name': 'Apple', 'date': today_str},
+                    'MSFT': {'price': 300.50, 'change_pct': 1.8, 'name': 'Microsoft', 'date': today_str},
+                    'GOOGL': {'price': 120.75, 'change_pct': -1.2, 'name': 'Google', 'date': today_str},
+                    'TSLA': {'price': 250.00, 'change_pct': 3.5, 'name': 'Tesla', 'date': today_str},
+                    'NVDA': {'price': 450.25, 'change_pct': 5.2, 'name': 'NVIDIA', 'date': today_str}
                 }
                 
                 if symbol in sample_data:
@@ -222,7 +239,8 @@ class ServerStockMarketBot:
                 'name': data['name'],
                 'change_pct': data['change_pct'],
                 'price': data['price'],
-                'news': data.get('news', '')
+                'news': data.get('news', ''),
+                'date': data.get('date')
             })
         
         # Sort by absolute change percentage
@@ -240,6 +258,9 @@ class ServerStockMarketBot:
         
         if not top_movers:
             return f"📊 {time_of_day} Market Update\n\nUnable to fetch market data at this time.\n\n⏰ {now_str}"
+
+        data_dates = [m.get('date') for m in top_movers if m.get('date')]
+        latest_date = max(data_dates) if data_dates else ''
 
         # Prepare data for template
         movers_lines = []
@@ -259,13 +280,13 @@ class ServerStockMarketBot:
 
         # Randomized templates
         templates = [
-            f"📊 {time_of_day} Market Update\n\n🔥 Top Movers Today:\n{movers_str}\n\n{summary}\n⏰ {now_str}",
-            f"{time_of_day} Recap: Who moved the market?\n{movers_str}\n{summary}\n⏰ {now_str}",
-            f"{time_of_day} movers: {', '.join([m['name'] for m in top_movers])}\n\n{movers_str}\n{summary}\n⏰ {now_str}",
-            f"{time_of_day} Stock Highlights:\n{movers_str}\n{summary}\n⏰ {now_str}",
+            f"📊 {time_of_day} Market Update\n\n🔥 Top Movers Today:\n{movers_str}\n\n{summary}\n📅 {latest_date} | ⏰ {now_str}",
+            f"{time_of_day} Recap: Who moved the market?\n{movers_str}\n{summary}\n📅 {latest_date} | ⏰ {now_str}",
+            f"{time_of_day} movers: {', '.join([m['name'] for m in top_movers])}\n\n{movers_str}\n{summary}\n📅 {latest_date} | ⏰ {now_str}",
+            f"{time_of_day} Stock Highlights:\n{movers_str}\n{summary}\n📅 {latest_date} | ⏰ {now_str}",
             f"{time_of_day} - {now_str}\nBiggest swings:\n{movers_str}\n{summary}",
-            f"{time_of_day} Market Movers:\n{movers_str}\n{summary}\n⏰ {now_str}",
-            f"{time_of_day} - Top 3 movers:\n{movers_str}\n{summary}\n⏰ {now_str}"
+            f"{time_of_day} Market Movers:\n{movers_str}\n{summary}\n📅 {latest_date} | ⏰ {now_str}",
+            f"{time_of_day} - Top 3 movers:\n{movers_str}\n{summary}\n📅 {latest_date} | ⏰ {now_str}"
         ]
         message = random.choice(templates)
         # Truncate if needed
@@ -363,4 +384,4 @@ def main():
         logging.error(f"Failed to start server bot: {e}")
 
 if __name__ == "__main__":
-    main() 
+    main()
