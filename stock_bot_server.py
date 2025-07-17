@@ -56,8 +56,13 @@ class ServerStockMarketBot:
         
         # Major stocks to track
         self.major_stocks = ['AAPL', 'MSFT', 'GOOGL', 'TSLA', 'NVDA']
-        
+
         logging.info("Server Stock Market Bot initialized successfully")
+
+        # Track when we last posted updates to avoid duplicates if the
+        # exact check time is missed due to the sleep interval
+        self.last_morning_post = None
+        self.last_evening_post = None
     
     def get_stock_data_alpha_vantage(self, symbol):
         """Get real stock data from Alpha Vantage"""
@@ -314,14 +319,22 @@ class ServerStockMarketBot:
             logging.error(f"Error in market update: {e}")
     
     def should_post_morning_update(self):
-        """Check if it's time for morning update (8 AM)"""
+        """Check if it's time for morning update (around 8 AM)"""
         now = datetime.now()
-        return now.hour == 8 and now.minute == 0
-    
+        if now.hour == 8 and now.minute < 5:
+            # Only post once per day
+            if self.last_morning_post != now.date():
+                return True
+        return False
+
     def should_post_evening_update(self):
-        """Check if it's time for evening update (8 PM)"""
+        """Check if it's time for evening update (around 8 PM)"""
         now = datetime.now()
-        return now.hour == 20 and now.minute == 0
+        if now.hour == 20 and now.minute < 5:
+            # Only post once per day
+            if self.last_evening_post != now.date():
+                return True
+        return False
     
     def run_server_loop(self):
         """Main server loop that checks for posting times"""
@@ -335,12 +348,14 @@ class ServerStockMarketBot:
                 if self.should_post_morning_update():
                     logging.info("Time for morning update!")
                     self.run_market_update(is_morning=True)
+                    self.last_morning_post = now.date()
                     time.sleep(60)  # Wait a minute to avoid duplicate posts
                 
                 # Check for evening update (8 PM)
                 elif self.should_post_evening_update():
                     logging.info("Time for evening update!")
                     self.run_market_update(is_morning=False)
+                    self.last_evening_post = now.date()
                     time.sleep(60)  # Wait a minute to avoid duplicate posts
                 
                 # Log status every hour
