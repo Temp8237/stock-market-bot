@@ -9,6 +9,7 @@ import time
 import schedule
 import tweepy
 import requests
+from requests.exceptions import RequestException
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
 import logging
@@ -62,6 +63,22 @@ class RealStockMarketBot:
         self.major_stocks = ['AAPL', 'MSFT', 'GOOGL', 'TSLA', 'NVDA']
         
         logging.info("Real Stock Market Bot initialized successfully")
+
+    @staticmethod
+    def retry_request(url, params=None, retries=3, backoff=1.5, timeout=10):
+        """Perform a GET request with retries and exponential backoff"""
+        for attempt in range(1, retries + 1):
+            try:
+                response = requests.get(url, params=params, timeout=timeout)
+                response.raise_for_status()
+                return response
+            except RequestException as e:
+                if attempt == retries:
+                    logging.error(f"Request to {url} failed after {retries} attempts: {e}")
+                    return None
+                sleep_time = backoff * attempt
+                logging.warning(f"Request failed (attempt {attempt}/{retries}): {e}. Retrying in {sleep_time}s")
+                time.sleep(sleep_time)
     
     def get_stock_data_alpha_vantage(self, symbol):
         """Get real stock data from Alpha Vantage"""
@@ -78,7 +95,9 @@ class RealStockMarketBot:
                 'outputsize': 'compact'
             }
             
-            response = requests.get(url, params=params, timeout=10)
+            response = self.retry_request(url, params=params)
+            if not response:
+                return None
             data = response.json()
             
             if 'Time Series (Daily)' in data:
@@ -136,7 +155,9 @@ class RealStockMarketBot:
                 'apiKey': self.news_api_key
             }
             
-            response = requests.get(url, params=params, timeout=10)
+            response = self.retry_request(url, params=params)
+            if not response:
+                return self.get_sample_news(symbol)
             data = response.json()
             
             if data.get('status') == 'ok' and data.get('articles'):
