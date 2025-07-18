@@ -10,6 +10,7 @@ A Python bot that automatically posts stock market updates to X (Twitter) at 8:0
 - 📈 Identifies biggest market movers (gainers and losers)
 - 📱 Posts formatted updates to X (Twitter)
 - 📝 Comprehensive logging
+- 🔄 Automatic retries for API requests
 
 ## Prerequisites
 
@@ -143,6 +144,7 @@ Edit the `format_market_update` method to change how posts look.
 3. **"Error fetching market data"**
    - Check your internet connection
    - Yahoo Finance API might be temporarily unavailable
+   - The bot automatically retries failed requests, but persistent errors will be logged
 
 ### Logs
 
