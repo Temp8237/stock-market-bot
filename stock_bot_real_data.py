@@ -9,6 +9,7 @@ import time
 import schedule
 import tweepy
 import requests
+from utils import create_session
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
 import logging
@@ -42,6 +43,9 @@ class RealStockMarketBot:
         
         # News API key
         self.news_api_key = os.getenv('NEWS_API_KEY')
+
+        # HTTP session with retry logic for reliability
+        self.session = create_session()
         
         if not all([self.api_key, self.api_secret, self.access_token, self.access_token_secret]):
             raise ValueError("Missing X API credentials in .env file")
@@ -78,7 +82,7 @@ class RealStockMarketBot:
                 'outputsize': 'compact'
             }
             
-            response = requests.get(url, params=params, timeout=10)
+            response = self.session.get(url, params=params, timeout=10)
             data = response.json()
             
             if 'Time Series (Daily)' in data:
@@ -136,7 +140,7 @@ class RealStockMarketBot:
                 'apiKey': self.news_api_key
             }
             
-            response = requests.get(url, params=params, timeout=10)
+            response = self.session.get(url, params=params, timeout=10)
             data = response.json()
             
             if data.get('status') == 'ok' and data.get('articles'):
