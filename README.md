@@ -9,6 +9,7 @@ A Python bot that automatically posts stock market updates to X (Twitter) at 8:0
 - ⏰ Automated posting at 8:00 AM and 8:00 PM
 - 📈 Identifies biggest market movers (gainers and losers)
 - 📱 Posts formatted updates to X (Twitter)
+- 📰 Posts revenue report summaries on earnings days
 - 📝 Comprehensive logging
 
 ## Prerequisites
@@ -86,6 +87,14 @@ nohup python stock_bot.py > bot_output.log 2>&1 &
    sudo systemctl enable stock-bot
    sudo systemctl start stock-bot
    ```
+
+### Running the Revenue Report Bot
+
+```bash
+python revenue_report_bot.py
+```
+
+This checks for newly released earnings and posts a short revenue summary to X.
 
 ## What the Bot Posts
 
