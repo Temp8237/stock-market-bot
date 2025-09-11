@@ -1,6 +1,6 @@
 # Stock Market Bot for X (Twitter)
 
-A Python bot that automatically posts stock market updates to X (Twitter) at 8:00 AM and 8:00 PM daily. The bot tracks major market indices and stocks, analyzes the biggest market movers, and posts formatted updates.
+A Python bot that automatically posts stock market updates to X (Twitter) at 8:00 AM and 8:00 PM daily. The bot is designed to run on your personal computer by default, tracking major market indices and stocks, analyzing the biggest market movers, and posting formatted updates. A server-based script is still provided for those who want to deploy in the cloud.
 
 ## Features
 
@@ -87,6 +87,10 @@ nohup python stock_bot.py > bot_output.log 2>&1 &
    sudo systemctl enable stock-bot
    sudo systemctl start stock-bot
    ```
+
+### Running on a Server (Optional)
+
+If you prefer to host the bot on a cloud server, use the `stock_bot_server.py` script. The included `Procfile` is configured to run this version for platforms such as Railway. See `RAILWAY_DEPLOYMENT.md` for detailed deployment instructions.
 
 ### Running the Revenue Report Bot
 
