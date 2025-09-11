@@ -9,7 +9,7 @@ import os
 import time
 import tweepy
 import requests
-from utils import create_session
+from utils import create_session, post_with_retry
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
 import logging
@@ -283,19 +283,10 @@ class ServerStockMarketBot:
         return message
     
     def post_to_x(self, message):
-        """Post message to X"""
-        try:
-            # X has a 280 character limit
-            if len(message) > 280:
-                message = message[:277] + "..."
-            
-            response = self.client.create_tweet(text=message)
-            logging.info("Successfully posted to X")
-            return True
-            
-        except Exception as e:
-            logging.error(f"Error posting to X: {e}")
-            return False
+        """Post message to X with retries"""
+        if len(message) > 280:
+            message = message[:277] + "..."
+        return post_with_retry(self.client, message)
     
     def run_market_update(self, is_morning=True):
         """Run the complete market update process"""
