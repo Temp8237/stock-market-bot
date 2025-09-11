@@ -11,7 +11,7 @@ from datetime import datetime
 
 import tweepy
 from dotenv import load_dotenv
-from utils import create_session
+from utils import create_session, post_with_retry
 
 load_dotenv()
 
@@ -125,13 +125,7 @@ class RevenueReportBot:
         return message
 
     def post_to_x(self, message: str) -> bool:
-        try:
-            self.client.create_tweet(text=message)
-            logging.info("Successfully posted revenue report")
-            return True
-        except Exception as e:
-            logging.error(f"Error posting revenue report: {e}")
-            return False
+        return post_with_retry(self.client, message)
 
     def check_and_post_reports(self):
         """Check for new earnings reports and post revenue summaries."""

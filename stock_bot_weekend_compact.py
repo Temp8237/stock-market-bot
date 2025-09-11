@@ -14,6 +14,7 @@ from datetime import datetime, timedelta
 from dotenv import load_dotenv
 import logging
 import random
+from utils import post_with_retry
 
 # Load environment variables
 load_dotenv()
@@ -147,22 +148,13 @@ class CompactWeekendStockMarketBot:
         return message
     
     def post_to_x(self, message):
-        """Post message to X using v2 API"""
-        try:
-            # X has a 280 character limit
-            if len(message) > 280:
-                # Truncate but keep disclaimer
-                disclaimer = "\n\n⚠️ Not financial advice. Do your own research."
-                max_content = 280 - len(disclaimer)
-                message = message[:max_content] + disclaimer
-            
-            response = self.client.create_tweet(text=message)
-            logging.info("Successfully posted weekend prediction to X using v2 API")
-            return True
-            
-        except Exception as e:
-            logging.error(f"Error posting to X: {e}")
-            return False
+        """Post message to X using v2 API with retries"""
+        if len(message) > 280:
+            # Truncate but keep disclaimer
+            disclaimer = "\n\n⚠️ Not financial advice. Do your own research."
+            max_content = 280 - len(disclaimer)
+            message = message[:max_content] + disclaimer
+        return post_with_retry(self.client, message)
     
     def run_weekend_update(self, is_morning=True):
         """Run the weekend prediction update process"""

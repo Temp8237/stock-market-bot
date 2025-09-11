@@ -11,6 +11,7 @@ A Python bot that automatically posts stock market updates to X (Twitter) at 8:0
 - 📱 Posts formatted updates to X (Twitter)
 - 📰 Posts revenue report summaries on earnings days
 - 📝 Comprehensive logging
+- 🔁 Automatic retry logic for posting to X
 
 ## Prerequisites
 
@@ -19,6 +20,13 @@ A Python bot that automatically posts stock market updates to X (Twitter) at 8:0
 - X API credentials
 
 ## Setup Instructions
+
+### 0. Download the Repository
+
+```bash
+git clone https://github.com/<your-username>/stock-market-bot.git
+cd stock-market-bot
+```
 
 ### 1. Install Dependencies
 
@@ -70,6 +78,7 @@ The bot will:
 - Start the scheduler
 - Run market updates at 8:00 AM and 8:00 PM
 - Log all activities to `stock_bot.log`
+- The terminal window running the bot must remain open or the process must stay running in the background
 
 ### Running as a Service (Optional)
 
