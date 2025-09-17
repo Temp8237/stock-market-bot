@@ -12,6 +12,7 @@ from datetime import datetime
 import tweepy
 from dotenv import load_dotenv
 from utils import create_session, post_with_retry
+import requests
 
 load_dotenv()
 
@@ -40,6 +41,9 @@ class RevenueReportBot:
             self.access_token_secret,
         ]):
             raise ValueError("Missing X API credentials in .env file")
+
+        if not self.alpha_vantage_key:
+            raise ValueError("Missing ALPHA_VANTAGE_API_KEY in .env file")
 
         self.session = create_session()
 
@@ -75,11 +79,38 @@ class RevenueReportBot:
         }
         try:
             response = self.session.get(url, params=params, timeout=10)
-            data = response.json()
-            return data.get('quarterlyEarnings', [None])[0]
-        except Exception as e:
-            logging.error(f"Error fetching earnings for {symbol}: {e}")
+            response.raise_for_status()
+        except requests.RequestException as exc:
+            logging.error(f"Error fetching earnings for {symbol}: {exc}")
             return None
+
+        try:
+            data = response.json()
+        except ValueError as exc:
+            logging.error(f"Invalid earnings response for {symbol}: {exc}")
+            return None
+
+        if data.get('Note'):
+            logging.warning(
+                "Alpha Vantage API limit reached while fetching earnings for %s",
+                symbol,
+            )
+            return None
+
+        if data.get('Error Message'):
+            logging.error(
+                "Alpha Vantage returned an error for %s earnings request: %s",
+                symbol,
+                data['Error Message'],
+            )
+            return None
+
+        quarterly = data.get('quarterlyEarnings')
+        if not isinstance(quarterly, list) or not quarterly:
+            logging.warning("No quarterly earnings data available for %s", symbol)
+            return None
+
+        return quarterly[0]
 
     def fetch_quarterly_revenues(self, symbol: str):
         """Return current and previous quarter revenues and fiscal date."""
@@ -91,19 +122,66 @@ class RevenueReportBot:
         }
         try:
             response = self.session.get(url, params=params, timeout=10)
+            response.raise_for_status()
+        except requests.RequestException as exc:
+            logging.error(f"Error fetching income statement for {symbol}: {exc}")
+            return None, None, None
+
+        try:
             data = response.json()
-            reports = data.get('quarterlyReports', [])
-            if len(reports) >= 2:
-                current = reports[0]
-                previous = reports[1]
-                return (
-                    float(current.get('totalRevenue', 0)),
-                    float(previous.get('totalRevenue', 0)),
-                    current.get('fiscalDateEnding'),
-                )
-        except Exception as e:
-            logging.error(f"Error fetching income statement for {symbol}: {e}")
-        return None, None, None
+        except ValueError as exc:
+            logging.error(f"Invalid income statement response for {symbol}: {exc}")
+            return None, None, None
+
+        if data.get('Note'):
+            logging.warning(
+                "Alpha Vantage API limit reached while fetching income statement for %s",
+                symbol,
+            )
+            return None, None, None
+
+        if data.get('Error Message'):
+            logging.error(
+                "Alpha Vantage returned an error for %s income statement request: %s",
+                symbol,
+                data['Error Message'],
+            )
+            return None, None, None
+
+        reports = data.get('quarterlyReports', [])
+        if len(reports) < 2:
+            logging.warning("Not enough quarterly reports available for %s", symbol)
+            return None, None, None
+
+        current = reports[0]
+        previous = reports[1]
+
+        current_revenue = self._parse_revenue_value(
+            current.get('totalRevenue'), symbol, "current"
+        )
+        previous_revenue = self._parse_revenue_value(
+            previous.get('totalRevenue'), symbol, "previous"
+        )
+        fiscal_date = current.get('fiscalDateEnding')
+
+        if current_revenue is None or previous_revenue is None:
+            return None, None, fiscal_date
+
+        return current_revenue, previous_revenue, fiscal_date
+
+    @staticmethod
+    def _parse_revenue_value(value, symbol: str, period: str):
+        """Convert Alpha Vantage revenue strings to floats safely."""
+        if value in (None, "", "None"):
+            logging.warning("Missing %s revenue value for %s", period, symbol)
+            return None
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            logging.warning(
+                "Unable to parse %s revenue value '%s' for %s", period, value, symbol
+            )
+            return None
 
     def format_message(
         self, name: str, fiscal_date: str, revenue: float, prev_revenue: float
@@ -114,9 +192,10 @@ class RevenueReportBot:
             change_pct = (revenue - prev_revenue) / prev_revenue * 100
         emoji = "📈" if change_pct >= 0 else "📉"
         revenue_b = revenue / 1_000_000_000
+        fiscal_period = fiscal_date or "Unknown"
         message = (
             f"{name} Revenue Report\n\n"
-            f"Quarter ending {fiscal_date}: ${revenue_b:.2f}B {emoji}\n"
+            f"Quarter ending {fiscal_period}: ${revenue_b:.2f}B {emoji}\n"
             f"Change vs prev quarter: {change_pct:+.2f}%"
         )
         message += f"\n⏰ {datetime.now().strftime('%Y-%m-%d')}"

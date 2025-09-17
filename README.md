@@ -45,7 +45,7 @@ pip install -r requirements.txt
 
 1. Copy the example environment file:
    ```bash
-   cp env_example.txt .env
+   cp env_example_enhanced.txt .env
    ```
 
 2. Edit the `.env` file with your X API credentials:
@@ -61,8 +61,12 @@ pip install -r requirements.txt
 Run a test to make sure everything is working:
 
 ```bash
-python stock_bot.py
+python stock_bot_real_data.py
 ```
+
+> 💡 Deploying to Railway or another server? Use `stock_bot_server.py`, which
+> runs a lightweight loop suitable for cron-style scheduling in headless
+> environments.
 
 The bot will start and schedule posts for 8:00 AM and 8:00 PM. You can stop it with Ctrl+C.
 
@@ -71,7 +75,7 @@ The bot will start and schedule posts for 8:00 AM and 8:00 PM. You can stop it w
 ### Running the Bot
 
 ```bash
-python stock_bot.py
+python stock_bot_real_data.py
 ```
 
 The bot will:
@@ -86,7 +90,7 @@ To run the bot continuously in the background:
 
 #### On macOS/Linux:
 ```bash
-nohup python stock_bot.py > bot_output.log 2>&1 &
+nohup python stock_bot_real_data.py > bot_output.log 2>&1 &
 ```
 
 #### Using systemd (Linux):
@@ -126,7 +130,7 @@ The bot posts formatted updates like this:
 
 ### Adding More Stocks
 
-Edit the `major_stocks` list in `stock_bot.py`:
+Edit the `major_stocks` list in `stock_bot_real_data.py`:
 
 ```python
 self.major_stocks = ['AAPL', 'MSFT', 'GOOGL', 'AMZN', 'TSLA', 'NVDA', 'META', 'NFLX', 'YOUR_STOCK']

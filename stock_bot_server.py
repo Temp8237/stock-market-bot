@@ -10,10 +10,9 @@ import time
 import tweepy
 import requests
 from utils import create_session, post_with_retry
-from datetime import datetime, timedelta
+from datetime import datetime
 from dotenv import load_dotenv
 import logging
-import json
 import random
 
 # Load environment variables
@@ -75,44 +74,68 @@ class ServerStockMarketBot:
             return None
         
         try:
-            url = f"https://www.alphavantage.co/query"
+            url = "https://www.alphavantage.co/query"
             params = {
                 'function': 'TIME_SERIES_DAILY',
                 'symbol': symbol,
                 'apikey': self.alpha_vantage_key,
                 'outputsize': 'compact'
             }
-            
+
             response = self.session.get(url, params=params, timeout=10)
+            response.raise_for_status()
+        except requests.RequestException as exc:
+            logging.error(f"Network error getting data for {symbol}: {exc}")
+            return None
+
+        try:
             data = response.json()
-            
-            if 'Time Series (Daily)' in data:
-                time_series = data['Time Series (Daily)']
-                dates = sorted(time_series.keys(), reverse=True)
-                
-                if len(dates) >= 2:
-                    today = dates[0]
-                    yesterday = dates[1]
-                    
-                    today_close = float(time_series[today]['4. close'])
-                    yesterday_close = float(time_series[yesterday]['4. close'])
-                    
-                    change = today_close - yesterday_close
-                    change_pct = (change / yesterday_close) * 100
-                    
-                    return {
-                        'price': today_close,
-                        'change': change,
-                        'change_pct': change_pct,
-                        'name': symbol
-                    }
-            
-            logging.warning(f"No data available for {symbol}")
+        except ValueError as exc:
+            logging.error(f"Invalid JSON response for {symbol}: {exc}")
             return None
-            
-        except Exception as e:
-            logging.error(f"Error getting data for {symbol}: {e}")
+
+        if data.get('Note'):
+            logging.warning(
+                "Alpha Vantage API limit reached while fetching data for %s",
+                symbol,
+            )
             return None
+
+        if data.get('Error Message'):
+            logging.error(
+                "Alpha Vantage returned an error for %s data request: %s",
+                symbol,
+                data['Error Message'],
+            )
+            return None
+
+        time_series = data.get('Time Series (Daily)')
+        if not isinstance(time_series, dict):
+            logging.warning(f"No time series data available for {symbol}")
+            return None
+
+        dates = sorted(time_series.keys(), reverse=True)
+        if len(dates) < 2:
+            logging.warning(f"Not enough data points returned for {symbol}")
+            return None
+
+        today, yesterday = dates[0], dates[1]
+        try:
+            today_close = float(time_series[today]['4. close'])
+            yesterday_close = float(time_series[yesterday]['4. close'])
+        except (KeyError, TypeError, ValueError) as exc:
+            logging.error(f"Invalid price data for {symbol}: {exc}")
+            return None
+
+        change = today_close - yesterday_close
+        change_pct = (change / yesterday_close) * 100 if yesterday_close else 0.0
+
+        return {
+            'price': today_close,
+            'change': change,
+            'change_pct': change_pct,
+            'name': symbol
+        }
     
     def get_news_for_stock(self, symbol):
         """Get real news for a stock from NewsAPI"""
@@ -142,27 +165,43 @@ class ServerStockMarketBot:
             }
             
             response = self.session.get(url, params=params, timeout=10)
+            response.raise_for_status()
+        except requests.RequestException as exc:
+            logging.error(f"Network error getting news for {symbol}: {exc}")
+            return self.get_sample_news(symbol)
+
+        try:
             data = response.json()
-            
-            if data.get('status') == 'ok' and data.get('articles'):
-                articles = data['articles']
-                if articles:
-                    # Get the most recent relevant article
-                    for article in articles:
-                        title = article.get('title', '')
-                        if any(keyword in title.lower() for keyword in ['stock', 'earnings', 'revenue', 'growth', 'sales', 'profit']):
-                            return title[:100] + "..." if len(title) > 100 else title
-                    
-                    # If no relevant article, use the first one
-                    title = articles[0].get('title', '')
-                    return title[:100] + "..." if len(title) > 100 else title
-            
-            logging.warning(f"No news found for {symbol}")
+        except ValueError as exc:
+            logging.error(f"Invalid news response for {symbol}: {exc}")
             return self.get_sample_news(symbol)
-            
-        except Exception as e:
-            logging.error(f"Error getting news for {symbol}: {e}")
+
+        if data.get('status') != 'ok':
+            logging.warning(
+                "News API returned status '%s' for %s", data.get('status'), symbol
+            )
             return self.get_sample_news(symbol)
+
+        articles = data.get('articles') or []
+        if not articles:
+            logging.warning(f"No news articles found for {symbol}")
+            return self.get_sample_news(symbol)
+
+        for article in articles:
+            title = (article.get('title') or '').strip()
+            lowered = title.lower()
+            if any(
+                keyword in lowered
+                for keyword in ['stock', 'earnings', 'revenue', 'growth', 'sales', 'profit']
+            ) and title:
+                return title[:100] + "..." if len(title) > 100 else title
+
+        title = (articles[0].get('title') or '').strip()
+        if title:
+            return title[:100] + "..." if len(title) > 100 else title
+
+        logging.warning(f"Articles lacked titles for {symbol}")
+        return self.get_sample_news(symbol)
     
     def get_sample_news(self, symbol):
         """Get sample news when API is not available"""
