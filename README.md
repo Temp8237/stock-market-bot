@@ -109,6 +109,22 @@ python revenue_report_bot.py
 
 This checks for newly released earnings and posts a short revenue summary to X.
 
+## Monitoring and Status Visibility
+
+- Every bot writes status snapshots to JSON files inside the `monitoring/`
+  directory (ignored by git). These files include the last successes,
+  failures, recent events, and metadata such as which tickers were posted.
+- Use the helper CLI to inspect the current state:
+
+  ```bash
+  python monitor_status.py
+  ```
+
+  Add `--events 10` to see more historical events or `--status-dir` to point to
+  a custom directory if you relocate the monitoring files.
+- Monitoring data is updated automatically whenever a scheduled run executes or
+  when the bot encounters notable errors such as API outages.
+
 ## What the Bot Posts
 
 The bot posts formatted updates like this:

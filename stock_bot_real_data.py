@@ -10,6 +10,7 @@ import schedule
 import tweepy
 import requests
 from utils import create_session, post_with_retry
+from monitoring import BotMonitor
 from datetime import datetime
 from dotenv import load_dotenv
 import logging
@@ -45,10 +46,22 @@ class RealStockMarketBot:
 
         # HTTP session with retry logic for reliability
         self.session = create_session()
-        
+
+        # Monitoring helper to persist status between runs
+        self.monitor = BotMonitor('real_stock_market_bot')
+        self.monitor.record_event('info', 'RealStockMarketBot initialization started')
+
+        # Track whether we've already emitted certain warnings
+        self._alpha_warning_logged = False
+        self._news_warning_logged = False
+
         if not all([self.api_key, self.api_secret, self.access_token, self.access_token_secret]):
+            self.monitor.record_event(
+                'error',
+                'Missing X API credentials during initialization',
+            )
             raise ValueError("Missing X API credentials in .env file")
-        
+
         # Initialize X API v2 client
         try:
             self.client = tweepy.Client(
@@ -59,19 +72,31 @@ class RealStockMarketBot:
             )
         except Exception as e:
             logging.error(f"Could not initialize X client: {e}")
+            self.monitor.record_event('error', 'Failed to initialize X client', {'error': str(e)})
             raise
-        
+
         # Major stocks to track
         self.major_stocks = ['AAPL', 'MSFT', 'GOOGL', 'TSLA', 'NVDA']
-        
+
         logging.info("Real Stock Market Bot initialized successfully")
+        self.monitor.record_event(
+            'success',
+            'RealStockMarketBot initialized successfully',
+            {'tracked_stocks': self.major_stocks},
+        )
     
     def get_stock_data_alpha_vantage(self, symbol):
         """Get real stock data from Alpha Vantage"""
         if not self.alpha_vantage_key:
             logging.warning("No Alpha Vantage API key - using sample data")
+            if not self._alpha_warning_logged:
+                self.monitor.record_event(
+                    'warning',
+                    'Alpha Vantage API key missing; using sample data',
+                )
+                self._alpha_warning_logged = True
             return None
-        
+
         try:
             url = "https://www.alphavantage.co/query"
             params = {
@@ -85,18 +110,33 @@ class RealStockMarketBot:
             response.raise_for_status()
         except requests.RequestException as exc:
             logging.error(f"Network error getting data for {symbol}: {exc}")
+            self.monitor.record_event(
+                'error',
+                f'Network error retrieving {symbol} data from Alpha Vantage',
+                {'symbol': symbol, 'error': str(exc)},
+            )
             return None
 
         try:
             data = response.json()
         except ValueError as exc:
             logging.error(f"Invalid JSON response for {symbol}: {exc}")
+            self.monitor.record_event(
+                'error',
+                f'Invalid JSON response for {symbol} from Alpha Vantage',
+                {'symbol': symbol, 'error': str(exc)},
+            )
             return None
 
         if data.get('Note'):
             logging.warning(
                 "Alpha Vantage API limit reached while fetching data for %s",
                 symbol,
+            )
+            self.monitor.record_event(
+                'warning',
+                'Alpha Vantage API limit reached',
+                {'symbol': symbol},
             )
             return None
 
@@ -106,16 +146,31 @@ class RealStockMarketBot:
                 symbol,
                 data['Error Message'],
             )
+            self.monitor.record_event(
+                'error',
+                'Alpha Vantage returned an error response',
+                {'symbol': symbol, 'message': data['Error Message']},
+            )
             return None
 
         time_series = data.get('Time Series (Daily)')
         if not isinstance(time_series, dict):
             logging.warning(f"No time series data available for {symbol}")
+            self.monitor.record_event(
+                'warning',
+                'No time series data available in Alpha Vantage response',
+                {'symbol': symbol},
+            )
             return None
 
         dates = sorted(time_series.keys(), reverse=True)
         if len(dates) < 2:
             logging.warning(f"Not enough data points returned for {symbol}")
+            self.monitor.record_event(
+                'warning',
+                'Alpha Vantage returned insufficient data points',
+                {'symbol': symbol, 'dates_returned': len(dates)},
+            )
             return None
 
         today, yesterday = dates[0], dates[1]
@@ -124,6 +179,11 @@ class RealStockMarketBot:
             yesterday_close = float(time_series[yesterday]['4. close'])
         except (KeyError, TypeError, ValueError) as exc:
             logging.error(f"Invalid price data for {symbol}: {exc}")
+            self.monitor.record_event(
+                'error',
+                'Alpha Vantage returned invalid price data',
+                {'symbol': symbol, 'error': str(exc)},
+            )
             return None
 
         change = today_close - yesterday_close
@@ -140,8 +200,14 @@ class RealStockMarketBot:
         """Get real news for a stock from NewsAPI"""
         if not self.news_api_key:
             logging.warning("No News API key - using sample news")
+            if not self._news_warning_logged:
+                self.monitor.record_event(
+                    'warning',
+                    'News API key missing; using sample headlines',
+                )
+                self._news_warning_logged = True
             return self.get_sample_news(symbol)
-        
+
         try:
             # Get company name for better news search
             company_names = {
@@ -167,23 +233,43 @@ class RealStockMarketBot:
             response.raise_for_status()
         except requests.RequestException as exc:
             logging.error(f"Network error getting news for {symbol}: {exc}")
+            self.monitor.record_event(
+                'warning',
+                'Network error retrieving NewsAPI headlines',
+                {'symbol': symbol, 'error': str(exc)},
+            )
             return self.get_sample_news(symbol)
 
         try:
             data = response.json()
         except ValueError as exc:
             logging.error(f"Invalid news response for {symbol}: {exc}")
+            self.monitor.record_event(
+                'warning',
+                'Invalid JSON response from NewsAPI',
+                {'symbol': symbol, 'error': str(exc)},
+            )
             return self.get_sample_news(symbol)
 
         if data.get('status') != 'ok':
             logging.warning(
                 "News API returned status '%s' for %s", data.get('status'), symbol
             )
+            self.monitor.record_event(
+                'warning',
+                'NewsAPI returned a non-ok status',
+                {'symbol': symbol, 'status': data.get('status')},
+            )
             return self.get_sample_news(symbol)
 
         articles = data.get('articles') or []
         if not articles:
             logging.warning(f"No news articles found for {symbol}")
+            self.monitor.record_event(
+                'warning',
+                'No NewsAPI articles found',
+                {'symbol': symbol},
+            )
             return self.get_sample_news(symbol)
 
         for article in articles:
@@ -197,9 +283,14 @@ class RealStockMarketBot:
 
         title = (articles[0].get('title') or '').strip()
         if title:
-            return title[:100] + "..." if len(title) > 100 else title
+                return title[:100] + "..." if len(title) > 100 else title
 
         logging.warning(f"Articles lacked titles for {symbol}")
+        self.monitor.record_event(
+            'warning',
+            'NewsAPI articles lacked titles',
+            {'symbol': symbol},
+        )
         return self.get_sample_news(symbol)
     
     def get_sample_news(self, symbol):
@@ -216,23 +307,26 @@ class RealStockMarketBot:
     def get_market_data_with_news(self):
         """Get real market data with news"""
         market_data = {}
-        
+        real_symbols = []
+        sample_symbols = []
+
         for symbol in self.major_stocks:
             logging.info(f"Fetching data for {symbol}...")
-            
+
             # Get stock data
             stock_data = self.get_stock_data_alpha_vantage(symbol)
-            
+
             if stock_data:
                 # Get news for this stock
                 news = self.get_news_for_stock(symbol)
-                
+
                 market_data[symbol] = {
                     **stock_data,
                     'news': news
                 }
-                
+
                 logging.info(f"✅ {symbol}: ${stock_data['price']:.2f} ({stock_data['change_pct']:+.2f}%)")
+                real_symbols.append(symbol)
             else:
                 # Use sample data if no real data available
                 sample_data = {
@@ -250,10 +344,24 @@ class RealStockMarketBot:
                         'news': news
                     }
                     logging.info(f"⚠️ {symbol}: Using sample data")
-            
+                    sample_symbols.append(symbol)
+
             # Rate limiting - wait between requests
             time.sleep(1)
-        
+
+        if real_symbols:
+            self.monitor.record_event(
+                'info',
+                'Fetched live market data',
+                {'symbols': real_symbols},
+            )
+        if sample_symbols:
+            self.monitor.record_event(
+                'warning',
+                'Using sample market data for symbols',
+                {'symbols': sample_symbols},
+            )
+
         return market_data
     
     def analyze_market_changes(self, market_data):
@@ -334,28 +442,61 @@ class RealStockMarketBot:
     
     def run_market_update(self, is_morning=True):
         """Run the complete market update process"""
+        update_label = 'morning' if is_morning else 'evening'
         try:
             logging.info(f"Starting {'morning' if is_morning else 'evening'} market update")
-            
+            self.monitor.record_event('info', f'Starting {update_label} market update')
+
             # Get market data with news
             market_data = self.get_market_data_with_news()
-            
+
             # Analyze changes
             top_movers = self.analyze_market_changes(market_data)
-            
+
             # Format message
             message = self.format_market_update(top_movers, is_morning)
-            
+
+            run_metadata = {
+                'symbols_with_data': list(market_data.keys()),
+                'top_movers': [
+                    {
+                        'symbol': mover['symbol'],
+                        'change_pct': mover['change_pct'],
+                        'price': mover['price'],
+                    }
+                    for mover in top_movers
+                ],
+                'tweet_length': len(message),
+            }
+
             # Post to X
             success = self.post_to_x(message)
-            
+
             if success:
                 logging.info("Market update completed successfully")
+                self.monitor.record_run(
+                    update_label,
+                    'success',
+                    'Market update posted to X',
+                    run_metadata,
+                )
             else:
                 logging.error("Failed to post market update")
-                
+                self.monitor.record_run(
+                    update_label,
+                    'error',
+                    'Failed to post market update',
+                    run_metadata,
+                )
+
         except Exception as e:
             logging.error(f"Error in market update: {e}")
+            self.monitor.record_run(
+                update_label,
+                'error',
+                f'Exception during {update_label} update',
+                {'error': str(e)},
+            )
     
     def morning_update(self):
         """Morning market update (8 AM)"""
@@ -369,9 +510,10 @@ class RealStockMarketBot:
         """Start the scheduler to run updates at 8 AM and 8 PM"""
         schedule.every().day.at("08:00").do(self.morning_update)
         schedule.every().day.at("20:00").do(self.evening_update)
-        
+
         logging.info("Scheduler started - updates scheduled for 8:00 AM and 8:00 PM")
-        
+        self.monitor.record_event('info', 'Scheduler started for RealStockMarketBot')
+
         while True:
             schedule.run_pending()
             time.sleep(60)  # Check every minute
