@@ -216,4 +216,4 @@ def main():
         logging.error(f"Failed to start compact weekend bot: {e}")
 
 if __name__ == "__main__":
-    main() 
+    main()
