@@ -15,6 +15,7 @@ from dotenv import load_dotenv
 import logging
 import random
 from utils import post_with_retry
+from monitoring import BotMonitor
 
 # Load environment variables
 load_dotenv()
@@ -36,10 +37,18 @@ class CompactWeekendStockMarketBot:
         self.api_secret = os.getenv('X_API_SECRET')
         self.access_token = os.getenv('X_ACCESS_TOKEN')
         self.access_token_secret = os.getenv('X_ACCESS_TOKEN_SECRET')
-        
+
+        # Monitoring helper to keep track of weekend updates
+        self.monitor = BotMonitor('weekend_stock_market_bot')
+        self.monitor.record_event('info', 'CompactWeekendStockMarketBot initialization started')
+
         if not all([self.api_key, self.api_secret, self.access_token, self.access_token_secret]):
+            self.monitor.record_event(
+                'error',
+                'Missing X API credentials during initialization',
+            )
             raise ValueError("Missing X API credentials in .env file")
-        
+
         # Initialize X API v2 client
         try:
             self.client = tweepy.Client(
@@ -50,12 +59,18 @@ class CompactWeekendStockMarketBot:
             )
         except Exception as e:
             logging.error(f"Could not initialize X client: {e}")
+            self.monitor.record_event('error', 'Failed to initialize X client', {'error': str(e)})
             raise
-        
+
         # Major stocks to track
         self.major_stocks = ['AAPL', 'MSFT', 'GOOGL', 'TSLA', 'NVDA']
-        
+
         logging.info("Compact Weekend Stock Market Bot initialized successfully")
+        self.monitor.record_event(
+            'success',
+            'CompactWeekendStockMarketBot initialized successfully',
+            {'tracked_stocks': self.major_stocks},
+        )
     
     def is_weekend(self):
         """Check if it's currently weekend"""
@@ -158,51 +173,95 @@ class CompactWeekendStockMarketBot:
     
     def run_weekend_update(self, is_morning=True):
         """Run the weekend prediction update process"""
+        update_label = 'morning' if is_morning else 'evening'
         try:
             logging.info(f"Starting {'morning' if is_morning else 'evening'} weekend prediction update")
-            
+            self.monitor.record_event('info', f'Starting {update_label} weekend prediction update')
+
             # Generate predictions
             predictions = self.get_weekend_predictions()
-            
+
             # Format message
             message = self.format_weekend_update(predictions, is_morning)
-            
+
+            run_metadata = {
+                'predictions': [
+                    {
+                        'symbol': symbol,
+                        'sentiment': details['sentiment'],
+                    }
+                    for symbol, details in predictions.items()
+                ],
+                'tweet_length': len(message),
+            }
+
             # Post to X
             success = self.post_to_x(message)
-            
+
             if success:
                 logging.info("Weekend prediction update completed successfully")
+                self.monitor.record_run(
+                    update_label,
+                    'success',
+                    'Weekend prediction update posted to X',
+                    run_metadata,
+                )
             else:
                 logging.error("Failed to post weekend prediction update")
-                
+                self.monitor.record_run(
+                    update_label,
+                    'error',
+                    'Failed to post weekend prediction update',
+                    run_metadata,
+                )
+
         except Exception as e:
             logging.error(f"Error in weekend update: {e}")
+            self.monitor.record_run(
+                update_label,
+                'error',
+                f'Exception during {update_label} weekend update',
+                {'error': str(e)},
+            )
     
     def morning_update(self):
         """Morning update (8 AM) - handles both weekday and weekend"""
         if self.is_weekend():
+            self.monitor.record_event('info', 'Weekend detected - running morning prediction update')
             self.run_weekend_update(is_morning=True)
         else:
             # For weekdays, use regular market data
             logging.info("Weekday detected - using regular market data")
+            self.monitor.record_run(
+                'morning',
+                'skipped',
+                'Weekend bot idle during weekday morning slot',
+            )
             # You could import and use the regular bot here
-    
+
     def evening_update(self):
         """Evening update (8 PM) - handles both weekday and weekend"""
         if self.is_weekend():
+            self.monitor.record_event('info', 'Weekend detected - running evening prediction update')
             self.run_weekend_update(is_morning=False)
         else:
             # For weekdays, use regular market data
             logging.info("Weekday detected - using regular market data")
+            self.monitor.record_run(
+                'evening',
+                'skipped',
+                'Weekend bot idle during weekday evening slot',
+            )
             # You could import and use the regular bot here
     
     def start_scheduler(self):
         """Start the scheduler to run updates at 8 AM and 8 PM"""
         schedule.every().day.at("08:00").do(self.morning_update)
         schedule.every().day.at("20:00").do(self.evening_update)
-        
+
         logging.info("Compact weekend bot scheduler started - updates scheduled for 8:00 AM and 8:00 PM")
-        
+        self.monitor.record_event('info', 'Scheduler started for CompactWeekendStockMarketBot')
+
         while True:
             schedule.run_pending()
             time.sleep(60)  # Check every minute
