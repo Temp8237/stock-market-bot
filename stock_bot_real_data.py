@@ -63,6 +63,10 @@ class RealStockMarketBot:
         
         # Major stocks to track
         self.major_stocks = ['AAPL', 'MSFT', 'GOOGL', 'TSLA', 'NVDA']
+
+        # Cache for sector performance to avoid repeated parsing if requests fail
+        self._last_sector_snapshot = None
+        self._last_sector_timestamp = None
         
         logging.info("Real Stock Market Bot initialized successfully")
     
@@ -213,6 +217,67 @@ class RealStockMarketBot:
         }
         return sample_news.get(symbol, f"📈 {symbol} shows positive momentum")
     
+    def get_sector_performance(self):
+        """Get top performing and lagging sectors from Alpha Vantage."""
+        if not self.alpha_vantage_key:
+            logging.warning("No Alpha Vantage API key - sector data unavailable")
+            return self._last_sector_snapshot
+
+        try:
+            url = "https://www.alphavantage.co/query"
+            params = {
+                'function': 'SECTOR',
+                'apikey': self.alpha_vantage_key
+            }
+            response = self.session.get(url, params=params, timeout=10)
+            response.raise_for_status()
+        except requests.RequestException as exc:
+            logging.error(f"Network error fetching sector performance: {exc}")
+            return self._last_sector_snapshot
+
+        try:
+            data = response.json()
+        except ValueError as exc:
+            logging.error(f"Invalid sector response: {exc}")
+            return self._last_sector_snapshot
+
+        realtime = data.get('Rank A: Real-Time Performance')
+        if not isinstance(realtime, dict):
+            logging.warning("Sector performance data missing from Alpha Vantage response")
+            return self._last_sector_snapshot
+
+        try:
+            parsed = []
+            for sector, value in realtime.items():
+                stripped = value.replace('%', '').strip()
+                performance = float(stripped)
+                parsed.append({'sector': sector, 'performance': performance})
+        except (ValueError, AttributeError) as exc:
+            logging.error(f"Failed to parse sector performance values: {exc}")
+            return self._last_sector_snapshot
+
+        if not parsed:
+            logging.warning("Sector performance list empty after parsing")
+            return self._last_sector_snapshot
+
+        parsed.sort(key=lambda x: x['performance'], reverse=True)
+        snapshot = {
+            'best': parsed[0],
+            'worst': parsed[-1],
+            'retrieved_at': data.get('Meta Data', {}).get('Last Refreshed')
+        }
+
+        self._last_sector_snapshot = snapshot
+        self._last_sector_timestamp = datetime.now()
+        logging.info(
+            "Sector leaders: %s (%.2f%%), laggards: %s (%.2f%%)",
+            snapshot['best']['sector'],
+            snapshot['best']['performance'],
+            snapshot['worst']['sector'],
+            snapshot['worst']['performance']
+        )
+        return snapshot
+
     def get_market_data_with_news(self):
         """Get real market data with news"""
         market_data = {}
@@ -260,7 +325,7 @@ class RealStockMarketBot:
         """Analyze market data and identify biggest changes"""
         if not market_data:
             return []
-        
+
         # Find biggest gainers and losers
         changes = []
         for symbol, data in market_data.items():
@@ -277,10 +342,29 @@ class RealStockMarketBot:
         
         # Get top 3 biggest movers
         top_movers = changes[:3]
-        
+
         return top_movers
-    
-    def format_market_update(self, top_movers, is_morning=True):
+
+    def compute_market_breadth(self, market_data):
+        """Compute aggregate stats like advancers, decliners, and average change."""
+        if not market_data:
+            return None
+
+        total = len(market_data)
+        advancers = sum(1 for item in market_data.values() if item['change_pct'] > 0)
+        decliners = sum(1 for item in market_data.values() if item['change_pct'] < 0)
+        unchanged = total - advancers - decliners
+        avg_change = sum(item['change_pct'] for item in market_data.values()) / total if total else 0.0
+
+        return {
+            'total': total,
+            'advancers': advancers,
+            'decliners': decliners,
+            'unchanged': unchanged,
+            'average_change': avg_change
+        }
+
+    def format_market_update(self, top_movers, is_morning=True, market_summary=None, sector_summary=None):
         """Format market update for X post with randomized templates"""
         time_of_day = "Morning" if is_morning else "Evening"
         now_str = datetime.now().strftime('%Y-%m-%d %H:%M')
@@ -295,23 +379,48 @@ class RealStockMarketBot:
         movers_str = "\n".join(movers_lines)
         gains = [m for m in top_movers if m['change_pct'] > 0]
         losses = [m for m in top_movers if m['change_pct'] < 0]
-        summary = ""
+        summary_lines = []
         if gains and losses:
-            summary = f"📈 Gainers: {len(gains)} | 📉 Losers: {len(losses)}"
+            summary_lines.append(f"📈 Gainers: {len(gains)} | 📉 Losers: {len(losses)}")
         elif gains:
-            summary = "📈 Market showing positive momentum"
+            summary_lines.append("📈 Market showing positive momentum")
         elif losses:
-            summary = "📉 Market showing downward pressure"
+            summary_lines.append("📉 Market showing downward pressure")
+
+        if market_summary and market_summary.get('total'):
+            breadth_line = (
+                f"Breadth: {market_summary['advancers']}/{market_summary['total']} adv"
+            )
+            if market_summary['decliners']:
+                breadth_line += f", {market_summary['decliners']} dec"
+            if market_summary['unchanged']:
+                breadth_line += f", {market_summary['unchanged']} flat"
+            summary_lines.append(breadth_line)
+
+            avg_change = market_summary.get('average_change')
+            if avg_change is not None:
+                summary_lines.append(f"Avg move: {avg_change:+.2f}%")
+
+        if sector_summary:
+            best = sector_summary.get('best')
+            worst = sector_summary.get('worst')
+            if best and worst:
+                summary_lines.append(
+                    f"Sectors: {best['sector']} {best['performance']:+.2f}% | "
+                    f"{worst['sector']} {worst['performance']:+.2f}%"
+                )
+
+        summary_block = "\n".join(summary_lines) if summary_lines else "No additional metrics available"
 
         # Randomized templates
         templates = [
-            f"📊 {time_of_day} Market Update\n\n🔥 Top Movers Today:\n{movers_str}\n\n{summary}\n⏰ {now_str}",
-            f"{time_of_day} Recap: Who moved the market?\n{movers_str}\n{summary}\n⏰ {now_str}",
-            f"{time_of_day} movers: {', '.join([m['name'] for m in top_movers])}\n\n{movers_str}\n{summary}\n⏰ {now_str}",
-            f"{time_of_day} Stock Highlights:\n{movers_str}\n{summary}\n⏰ {now_str}",
-            f"{time_of_day} - {now_str}\nBiggest swings:\n{movers_str}\n{summary}",
-            f"{time_of_day} Market Movers:\n{movers_str}\n{summary}\n⏰ {now_str}",
-            f"{time_of_day} - Top 3 movers:\n{movers_str}\n{summary}\n⏰ {now_str}"
+            f"📊 {time_of_day} Market Update\n\n🔥 Top Movers Today:\n{movers_str}\n\n{summary_block}\n⏰ {now_str}",
+            f"{time_of_day} Recap: Who moved the market?\n{movers_str}\n{summary_block}\n⏰ {now_str}",
+            f"{time_of_day} movers: {', '.join([m['name'] for m in top_movers])}\n\n{movers_str}\n{summary_block}\n⏰ {now_str}",
+            f"{time_of_day} Stock Highlights:\n{movers_str}\n{summary_block}\n⏰ {now_str}",
+            f"{time_of_day} - {now_str}\nBiggest swings:\n{movers_str}\n{summary_block}",
+            f"{time_of_day} Market Movers:\n{movers_str}\n{summary_block}\n⏰ {now_str}",
+            f"{time_of_day} - Top 3 movers:\n{movers_str}\n{summary_block}\n⏰ {now_str}"
         ]
         message = random.choice(templates)
         # Truncate if needed
@@ -342,9 +451,16 @@ class RealStockMarketBot:
             
             # Analyze changes
             top_movers = self.analyze_market_changes(market_data)
-            
+            market_summary = self.compute_market_breadth(market_data)
+            sector_summary = self.get_sector_performance()
+
             # Format message
-            message = self.format_market_update(top_movers, is_morning)
+            message = self.format_market_update(
+                top_movers,
+                is_morning,
+                market_summary=market_summary,
+                sector_summary=sector_summary
+            )
             
             # Post to X
             success = self.post_to_x(message)
