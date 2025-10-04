@@ -10,6 +10,7 @@ A Python bot that automatically posts stock market updates to X (Twitter) at 8:0
 - 📈 Identifies biggest market movers (gainers and losers)
 - 📱 Posts formatted updates to X (Twitter)
 - 📰 Posts revenue report summaries on earnings days
+- 🧭 Summarizes market breadth (advancers vs. decliners) and sector leadership
 - 📝 Comprehensive logging
 - 🔁 Automatic retry logic for posting to X
 
@@ -54,6 +55,9 @@ pip install -r requirements.txt
    X_API_SECRET=your_actual_api_secret
    X_ACCESS_TOKEN=your_actual_access_token
    X_ACCESS_TOKEN_SECRET=your_actual_access_token_secret
+   # Optional but recommended for live metrics
+   ALPHA_VANTAGE_API_KEY=your_alpha_vantage_key
+   NEWS_API_KEY=your_news_api_key
    ```
 
 ### 4. Test the Bot
@@ -122,6 +126,9 @@ The bot posts formatted updates like this:
 3. Apple: +2.18% 📈
 
 📈 Gainers: 2 | 📉 Losers: 1
+Breadth: 5/8 adv, 2 dec, 1 flat
+Avg move: +1.12%
+Sectors: Technology +2.51% | Utilities -0.84%
 
 ⏰ 2024-01-15 08:00
 ```
